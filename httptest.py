@@ -163,4 +163,4 @@ def testserver(app, host='localhost', startport=30059, timeout=30):
     Note that on Windows the WSGI app will need to be importable (i.e.,
     it cannot be a closure and it must be pickleable).
     """
-    return TestServer(app, host, startport)
+    return TestServer(app, host, startport, timeout)
