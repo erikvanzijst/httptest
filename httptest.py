@@ -4,15 +4,10 @@ import errno
 import socket
 import time
 from io import BytesIO
-from multiprocessing import Event, Process, Queue
+from threading import Event, Thread
 from wsgiref.handlers import format_date_time # XXX: This is probably private.
 from wsgiref.simple_server import (WSGIRequestHandler, WSGIServer,
                                    make_server as make_wsgi_server)
-
-try:
-    from queue import Empty
-except ImportError:
-    from Queue import Empty
 
 try:
     from urllib.parse import urljoin
@@ -71,9 +66,9 @@ class _TestWSGIRequestHandler(WSGIRequestHandler, object):
     def log_request(self, code='-', size='-'):
         pass
 
-def _logmiddleware(app, logqueue):
+def _logmiddleware(app, log):
     """Wrap WSGI app with a middleware that logs request and response
-    information to logqueue.
+    information to log.
     """
     def wrapper(environ, start_response):
         resstatus = [None]
@@ -143,15 +138,15 @@ def _logmiddleware(app, logqueue):
         if 'content-length' not in resheaders:
             resheaders['content-length'] = str(len(body))
 
-        logqueue.put(({'method': environ['REQUEST_METHOD'],
-                       'protocol': environ['SERVER_PROTOCOL'],
-                       'address': environ['REMOTE_ADDR'],
-                       'path': path,
-                       'headers': headers,
-                       'body': reqbody},
-                      {'status': resstatus[0],
-                       'headers': resheaders,
-                       'body': body}))
+        log.append((TestRequest(method=environ['REQUEST_METHOD'],
+                                protocol=environ['SERVER_PROTOCOL'],
+                                address=environ['REMOTE_ADDR'],
+                                path=path,
+                                headers=headers,
+                                body=reqbody),
+                    TestResponse(status=resstatus[0],
+                                 headers=resheaders,
+                                 body=body)))
 
         return response
     return wrapper
@@ -160,8 +155,8 @@ def defaultapp(environ, start_response):
     start_response('204 No Content', [])
     return [b'']
 
-def _makeserver(host, port, app, logqueue, start, stop):
-    httpd = make_wsgi_server(host, port, _logmiddleware(app, logqueue),
+def _makeserver(host, port, app, log, start, stop):
+    httpd = make_wsgi_server(host, port, _logmiddleware(app, log),
                              server_class=_TestWSGIServer,
                              handler_class=_TestWSGIRequestHandler)
     start.set()
@@ -181,7 +176,6 @@ class TestServer(object):
         self._startport = startport
         self._port = None
         self._httpd = None
-        self._logqueue = None
         self._log = []
         self._stop = None
         self._timeout = timeout
@@ -195,15 +189,12 @@ class TestServer(object):
 
             start = Event()
             self._port = port
-            self._logqueue = Queue()
             self._stop = Event()
-            self._httpd = Process(target=_makeserver,
-                                  args=(self._host, self._port, self._app,
-                                        self._logqueue, start, self._stop))
+            self._httpd = Thread(target=_makeserver,
+                                 args=(self._host, self._port, self._app,
+                                       self._log, start, self._stop))
             self._httpd.start()
             if not start.wait(self._timeout):
-                if self._httpd.is_alive():
-                    self._httpd.terminate()
                 raise TestServerTimeoutError('Timed out while starting')
 
     def __enter__(self):
@@ -216,20 +207,9 @@ class TestServer(object):
             self._stop.set()
             self._httpd.join(self._timeout)
             if self._httpd.is_alive():
-                self._httpd.terminate()
-                self._httpd = None
                 raise TestServerTimeoutError('Timed out while stopping')
             else:
                 self._httpd = None
-
-            while True:
-                try:
-                    reqdata, resdata = self._logqueue.get(timeout=1)
-                except Empty:
-                    break
-                else:
-                    self._log.append((TestRequest(**reqdata),
-                                      TestResponse(**resdata)))
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.stop()
@@ -306,8 +286,5 @@ def testserver(app=defaultapp, host='localhost', startport=30059, timeout=30):
     ... finally:
     ...     server.stop()
     >>> assert response.text == u'Hello, test!'
-
-    Note that on Windows the WSGI app will need to be importable (i.e.,
-    it cannot be a closure and it must be pickleable).
     """
     return TestServer(app, host, startport, timeout)
