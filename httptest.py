@@ -92,7 +92,7 @@ def _logmiddleware(app, log):
                 headers.append(('Date', date))
 
             if 'server' not in resheaders:
-                server = 'httptest/0.1'
+                server = 'httptest'
                 resheaders['server'] = server
                 headers.append(('Server', server))
 
