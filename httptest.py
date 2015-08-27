@@ -123,7 +123,7 @@ def _logmiddleware(app, logqueue):
 
 def defaultapp(environ, start_response):
     start_response('204 No Content', [])
-    return ['']
+    return [b'']
 
 def _makeserver(host, port, app, logqueue, start, stop):
     httpd = make_wsgi_server(host, port, _logmiddleware(app, logqueue),
