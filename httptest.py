@@ -231,6 +231,9 @@ class TestServer(object):
         """Return a log of requests and responses"""
         return self._log
 
+# XXX: Support setting app as a string, 2-tuple (status, body), 3-tuple
+#      (status, headers, body), or dict {url: string/2-tuple/3-tuple}.
+#      The body should be a bytes object or an iterator that yields bytes.
 def testserver(app=defaultapp, host='localhost', startport=30059, timeout=30):
     """Create a test HTTP server from a WSGI app.
 
