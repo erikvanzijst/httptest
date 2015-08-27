@@ -20,7 +20,8 @@ __all__ = ['testserver', 'TestRequest', 'TestResponse', 'TestServer',
 class TestRequest(object):
     """A request made to the test server"""
 
-    def __init__(self, method, protocol, address, path, headers, body):
+    def __init__(self, method=None, protocol=None, address=None, path=None,
+                 headers=None, body=None):
         self.method = method
         self.protocol = protocol
         self.address = address
@@ -31,7 +32,7 @@ class TestRequest(object):
 class TestResponse(object):
     """A response from the test server"""
 
-    def __init__(self, status, headers, body):
+    def __init__(self, status=None, headers=None, body=None):
         self.status = status
         self.headers = headers
         self.body = body
@@ -66,90 +67,91 @@ class _TestWSGIRequestHandler(WSGIRequestHandler, object):
     def log_request(self, code='-', size='-'):
         pass
 
-# XXX: Always add to the log, even if the app raises an exception.
 def _logmiddleware(app, log):
     """Wrap WSGI app with a middleware that logs request and response
     information to log.
     """
     def wrapper(environ, start_response):
-        resstatus = [None]
-        resheaders = {}
-        written = []
-        def start_response_wrapper(status, headers, exc_info=None):
-            write = start_response(status, headers, exc_info)
+        request = TestRequest()
+        response = TestResponse()
+        try:
+            request.method = environ['REQUEST_METHOD']
+            request.protocol = environ['SERVER_PROTOCOL']
+            request.address = environ['REMOTE_ADDR']
 
-            resstatus[0] = status
-            for key, value in headers:
-                key = key.lower()
-                if key in resheaders:
-                    resheaders[key] += ',' + value
-                else:
-                    resheaders[key] = value
+            path = environ.get('SCRIPT_NAME') or '/'
+            pathinfo = environ.get('PATH_INFO', '')
+            if not environ.get('SCRIPT_NAME'):
+                path += pathinfo[1:]
+            else:
+                path += pathinfo
+            querystring = environ.get('QUERY_STRING')
+            if querystring:
+                path += '?' + querystring
+            request.path = path
 
-            if 'date' not in resheaders:
-                date = format_date_time(time.time())
-                resheaders['date'] = date
-                headers.append(('Date', date))
+            rawlength = environ.get('CONTENT_LENGTH')
+            if rawlength and rawlength.isdigit():
+                length = int(rawlength)
+            else:
+                length = -1
+            if length > 0:
+                request.body = environ['wsgi.input'].read(length)
+                environ['wsgi.input'] = BytesIO(request.body)
+            else:
+                request.body = None
 
-            if 'server' not in resheaders:
-                server = 'httptest'
-                resheaders['server'] = server
-                headers.append(('Server', server))
+            reqheaders = {}
+            contenttype = environ.get('CONTENT_TYPE')
+            if rawlength:
+                reqheaders['content-length'] = rawlength
+            if contenttype:
+                reqheaders['content-type'] = contenttype
+            for key, value in environ.items():
+                if key.startswith('HTTP_'):
+                    key = key[5:].replace('_', '-').lower()
+                    reqheaders[key] = value
+            request.headers = reqheaders
 
-            def write_wrapper(data):
-                written.append(data)
-                return write(data)
-            return write_wrapper
+            resheaders = {}
+            written = []
+            def start_response_wrapper(status, headers, exc_info=None):
+                write = start_response(status, headers, exc_info)
 
-        rawlength = environ.get('CONTENT_LENGTH')
-        if rawlength and rawlength.isdigit():
-            length = int(rawlength)
-        else:
-            length = -1
-        if length > 0:
-            reqbody = environ['wsgi.input'].read(length)
-            environ['wsgi.input'] = BytesIO(reqbody)
-        else:
-            reqbody = None
+                response.status = status
+                for key, value in headers:
+                    key = key.lower()
+                    if key in resheaders:
+                        resheaders[key] += ',' + value
+                    else:
+                        resheaders[key] = value
 
-        response = list(app(environ, start_response_wrapper))
+                if 'date' not in resheaders:
+                    date = format_date_time(time.time())
+                    resheaders['date'] = date
+                    headers.append(('Date', date))
 
-        path = environ.get('SCRIPT_NAME') or '/'
-        pathinfo = environ.get('PATH_INFO', '')
-        if not environ.get('SCRIPT_NAME'):
-            path += pathinfo[1:]
-        else:
-            path += pathinfo
-        querystring = environ.get('QUERY_STRING')
-        if querystring:
-            path += '?' + querystring
+                if 'server' not in resheaders:
+                    server = 'httptest'
+                    resheaders['server'] = server
+                    headers.append(('Server', server))
 
-        headers = {}
-        contenttype = environ.get('CONTENT_TYPE')
-        if rawlength:
-            headers['content-length'] = rawlength
-        if contenttype:
-            headers['content-type'] = contenttype
-        for key, value in environ.items():
-            if key.startswith('HTTP_'):
-                key = key[5:].replace('_', '-').lower()
-                headers[key] = value
+                def write_wrapper(data):
+                    written.append(data)
+                    return write(data)
+                return write_wrapper
 
-        body = b''.join(written) + b''.join(response)
-        if 'content-length' not in resheaders:
-            resheaders['content-length'] = str(len(body))
+            out = list(app(environ, start_response_wrapper))
+            resbody = b''.join(written) + b''.join(out)
+            if 'content-length' not in resheaders:
+                resheaders['content-length'] = str(len(resbody))
 
-        log.append((TestRequest(method=environ['REQUEST_METHOD'],
-                                protocol=environ['SERVER_PROTOCOL'],
-                                address=environ['REMOTE_ADDR'],
-                                path=path,
-                                headers=headers,
-                                body=reqbody),
-                    TestResponse(status=resstatus[0],
-                                 headers=resheaders,
-                                 body=body)))
+            response.headers = resheaders
+            response.body = resbody
 
-        return response
+            return out
+        finally:
+            log.append((request, response))
     return wrapper
 
 def defaultapp(environ, start_response):
