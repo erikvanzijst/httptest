@@ -251,7 +251,6 @@ def testserver(app=defaultapp, host='localhost', startport=30059, timeout=30):
     ...     assert request.path == '/foo'
     ...     assert response.status == '204 No Content'
 
-
     A WSGI app can be provided:
 
     >>> def app(environ, start_response):
