@@ -66,6 +66,7 @@ class _TestWSGIRequestHandler(WSGIRequestHandler, object):
     def log_request(self, code='-', size='-'):
         pass
 
+# XXX: Always add to the log, even if the app raises an exception.
 def _logmiddleware(app, log):
     """Wrap WSGI app with a middleware that logs request and response
     information to log.
