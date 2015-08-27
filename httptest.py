@@ -2,8 +2,10 @@
 
 import errno
 import socket
+import time
 from io import BytesIO
 from multiprocessing import Event, Process, Queue
+from wsgiref.handlers import format_date_time # XXX: This is probably private.
 from wsgiref.simple_server import (WSGIRequestHandler, WSGIServer,
                                    make_server as make_wsgi_server)
 
@@ -64,19 +66,10 @@ class _TestWSGIServer(WSGIServer):
     timeout = 0.5
 
 class _TestWSGIRequestHandler(WSGIRequestHandler, object):
-    """Like WSGIRequestHandler, but disables logging and captures extra
-    request information.
-    """
+    """Like WSGIRequestHandler, but disables logging"""
 
     def log_request(self, code='-', size='-'):
         pass
-
-    def get_environ(self):
-        env = super(_TestWSGIRequestHandler, self).get_environ()
-        env['x-httptest.path'] = self.path
-        env['x-httptest.headers'] = [tuple(line.rstrip().split(': ', 1))
-                                     for line in self.headers.headers]
-        return env
 
 def _logmiddleware(app, logqueue):
     """Wrap WSGI app with a middleware that logs request and response
@@ -84,20 +77,37 @@ def _logmiddleware(app, logqueue):
     """
     def wrapper(environ, start_response):
         resstatus = [None]
-        resheaders = [None]
+        resheaders = {}
         written = []
         def start_response_wrapper(status, headers, exc_info=None):
-            resstatus[0] = status
-            resheaders[0] = headers
             write = start_response(status, headers, exc_info)
+
+            resstatus[0] = status
+            for key, value in headers:
+                key = key.lower()
+                if key in resheaders:
+                    resheaders[key] += ',' + value
+                else:
+                    resheaders[key] = value
+
+            if 'date' not in resheaders:
+                date = format_date_time(time.time())
+                resheaders['date'] = date
+                headers.append(('Date', date))
+
+            if 'server' not in resheaders:
+                server = 'httptest/0.1'
+                resheaders['server'] = server
+                headers.append(('Server', server))
+
             def write_wrapper(data):
                 written.append(data)
                 return write(data)
             return write_wrapper
 
-        length = environ.get('CONTENT_LENGTH')
-        if length and length.isdigit():
-            length = int(length)
+        rawlength = environ.get('CONTENT_LENGTH')
+        if rawlength and rawlength.isdigit():
+            length = int(rawlength)
         else:
             length = -1
         if length > 0:
@@ -108,15 +118,40 @@ def _logmiddleware(app, logqueue):
 
         response = list(app(environ, start_response_wrapper))
 
+        path = environ.get('SCRIPT_NAME') or '/'
+        pathinfo = environ.get('PATH_INFO', '')
+        if not environ.get('SCRIPT_NAME'):
+            path += pathinfo[1:]
+        else:
+            path += pathinfo
+        querystring = environ.get('QUERY_STRING')
+        if querystring:
+            path += '?' + querystring
+
+        headers = {}
+        contenttype = environ.get('CONTENT_TYPE')
+        if rawlength:
+            headers['content-length'] = rawlength
+        if contenttype:
+            headers['content-type'] = contenttype
+        for key, value in environ.items():
+            if key.startswith('HTTP_'):
+                key = key[5:].replace('_', '-').lower()
+                headers[key] = value
+
+        body = b''.join(written) + b''.join(response)
+        if 'content-length' not in resheaders:
+            resheaders['content-length'] = str(len(body))
+
         logqueue.put(({'method': environ['REQUEST_METHOD'],
                        'protocol': environ['SERVER_PROTOCOL'],
                        'address': environ['REMOTE_ADDR'],
-                       'path': environ['x-httptest.path'],
-                       'headers': environ['x-httptest.headers'],
+                       'path': path,
+                       'headers': headers,
                        'body': reqbody},
                       {'status': resstatus[0],
-                       'headers': resheaders[0],
-                       'body': ''.join(written) + ''.join(response)}))
+                       'headers': resheaders,
+                       'body': body}))
 
         return response
     return wrapper
