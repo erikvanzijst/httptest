@@ -5,7 +5,7 @@ import socket
 import time
 from io import BytesIO
 from threading import Event, Thread
-from wsgiref.handlers import format_date_time # XXX: This is probably private.
+from wsgiref.handlers import format_date_time
 from wsgiref.simple_server import (WSGIRequestHandler, WSGIServer,
                                    make_server as make_wsgi_server)
 
