@@ -186,6 +186,7 @@ class TestServer(object):
     def start(self):
         """Start the HTTP server"""
         if self._httpd is None:
+            port = self._startport
             for port in range(self._startport, self._startport + 100):
                 if _portavailable(self._host, port):
                     break
