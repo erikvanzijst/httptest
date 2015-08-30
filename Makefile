@@ -25,7 +25,7 @@ dist:
 	$(PYTHON) setup.py -q sdist
 
 test:
-	$(PYTHON) -m doctest -v httptest.py
+	$(PYTHON) -Werror -m unittest tests $(TESTFLAGS)
 
 tests: test
 
