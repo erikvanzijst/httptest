@@ -80,7 +80,6 @@ class _TestWSGIServer(WSGIServer, object):
 
     def serve_forever(self, poll_interval=None):
         """Serve forever--or until told to stop via the stopfd pipe"""
-
         if poll_interval is not None:
             raise ValueError('poll_interval is not supported')
 
