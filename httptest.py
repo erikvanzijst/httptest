@@ -2,13 +2,13 @@
 
 import errno
 import os
+import select
 import socket
 import time
 from io import BytesIO
 from threading import Event, Thread
 from wsgiref.handlers import format_date_time
-from wsgiref.simple_server import (WSGIRequestHandler, WSGIServer,
-                                   make_server as make_wsgi_server)
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 
 try:
     from urllib.parse import urljoin
@@ -61,12 +61,43 @@ def _portavailable(host, port):
     else:
         return True
 
-class _TestWSGIServer(WSGIServer):
-    """Like WSGIServer, but sets a default timeout for handle_request()"""
+class _TestWSGIServer(WSGIServer, object):
+    """Like WSGIServer, but supports stopping via pipe"""
+
     if os.name == 'nt':
         allow_reuse_address = _allow_reuse_address
 
-    timeout = 0.5
+    def __init__(self, *args, **kwargs):
+        """Initialize the test HTTP server.
+
+        In addition to the arguments WSGIserver accepts, this also
+        requires a stopfd keyword argument. This should be a pipe file
+        descriptor that the caller will use to communicate when the server
+        should stop.
+        """
+        self._stopfd = kwargs.pop('stopfd')
+        super(_TestWSGIServer, self).__init__(*args, **kwargs)
+
+    def serve_forever(self, poll_interval=None):
+        """Serve forever--or until told to stop via the stopfd pipe"""
+
+        if poll_interval is not None:
+            raise ValueError('poll_interval is not supported')
+
+        while True:
+            while True:
+                try:
+                    fdsets = select.select([self, self._stopfd], [], [])
+                    break
+                except OSError as e:
+                    if e.errno != errno.EINTR:
+                        raise
+
+            if self in fdsets[0]:
+                self._handle_request_noblock()
+
+            if self._stopfd in fdsets[0]:
+                break
 
 class _TestWSGIRequestHandler(WSGIRequestHandler, object):
     """Like WSGIRequestHandler, but disables logging"""
@@ -165,14 +196,13 @@ def defaultapp(environ, start_response):
     start_response('204 No Content', [])
     return [b'']
 
-def _makeserver(host, port, app, logqueue, start, stop):
-    httpd = make_wsgi_server(host, port, _logmiddleware(app, logqueue),
-                             server_class=_TestWSGIServer,
-                             handler_class=_TestWSGIRequestHandler)
+def _makeserver(host, port, app, logqueue, start, stopfd):
+    httpd = _TestWSGIServer((host, port), _TestWSGIRequestHandler,
+                            stopfd=stopfd)
+    httpd.set_app(_logmiddleware(app, logqueue))
     start.set()
     try:
-        while not stop.is_set():
-            httpd.handle_request()
+        httpd.serve_forever()
     finally:
         httpd.server_close()
 
@@ -188,7 +218,7 @@ class TestServer(object):
         self._httpd = None
         self._log = []
         self._logqueue = Queue()
-        self._stop = None
+        self._stoppipe = None
         self._timeout = timeout
 
     def start(self):
@@ -201,10 +231,11 @@ class TestServer(object):
 
             start = Event()
             self._port = port
-            self._stop = Event()
+            self._stoppipe = os.pipe()
             self._httpd = Thread(target=_makeserver,
                                  args=(self._host, self._port, self._app,
-                                       self._logqueue, start, self._stop))
+                                       self._logqueue, start,
+                                       self._stoppipe[0]))
             self._httpd.start()
             if not start.wait(self._timeout):
                 raise RuntimeError('Timed out while starting')
@@ -216,13 +247,15 @@ class TestServer(object):
     def stop(self):
         """Stop the HTTP server"""
         if self._httpd is not None:
-            self._stop.set()
+            os.write(self._stoppipe[1], b's')
             self._httpd.join(self._timeout)
             if self._httpd.is_alive():
                 raise RuntimeError('Timed out while stopping')
             else:
                 self._httpd = None
-                self._stop = None
+                os.close(self._stoppipe[0])
+                os.close(self._stoppipe[1])
+                self._stoppipe = None
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.stop()
