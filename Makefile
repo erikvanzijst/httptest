@@ -11,9 +11,8 @@ build:
 
 clean:
 	-$(PYTHON) setup.py clean --all
-	find . -not -path '*/.hg/*' \( -name '*.py[cdo]' -o -name '*.err' -o \
-		-name '*,cover' -o -name __pycache__ \) -prune \
-		-exec rm -rf '{}' ';'
+	find . -not -path '*/.git/*' \( -name '*.py[cdo]' -o -name '*,cover' \
+		-o -name __pycache__ \) -prune -exec rm -rf '{}' ';'
 	rm -rf dist build htmlcov
 	rm -f README.md MANIFEST .coverage
 
