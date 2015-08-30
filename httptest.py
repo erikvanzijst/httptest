@@ -15,6 +15,11 @@ try:
 except ImportError:
     from urlparse import urljoin
 
+try:
+    from queue import Empty, Queue
+except ImportError:
+    from Queue import Empty, Queue
+
 __all__ = ['testserver', 'TestRequest', 'TestResponse', 'TestServer']
 
 _allow_reuse_address = os.name != 'nt'
@@ -69,9 +74,9 @@ class _TestWSGIRequestHandler(WSGIRequestHandler, object):
     def log_request(self, code='-', size='-'):
         pass
 
-def _logmiddleware(app, log):
+def _logmiddleware(app, logqueue):
     """Wrap WSGI app with a middleware that logs request and response
-    information to log.
+    information to logqueue.
     """
     def wrapper(environ, start_response):
         request = TestRequest()
@@ -153,15 +158,15 @@ def _logmiddleware(app, log):
 
             return out
         finally:
-            log.append((request, response))
+            logqueue.put((request, response))
     return wrapper
 
 def defaultapp(environ, start_response):
     start_response('204 No Content', [])
     return [b'']
 
-def _makeserver(host, port, app, log, start, stop):
-    httpd = make_wsgi_server(host, port, _logmiddleware(app, log),
+def _makeserver(host, port, app, logqueue, start, stop):
+    httpd = make_wsgi_server(host, port, _logmiddleware(app, logqueue),
                              server_class=_TestWSGIServer,
                              handler_class=_TestWSGIRequestHandler)
     start.set()
@@ -182,6 +187,7 @@ class TestServer(object):
         self._port = None
         self._httpd = None
         self._log = []
+        self._logqueue = Queue()
         self._stop = None
         self._timeout = timeout
 
@@ -198,7 +204,7 @@ class TestServer(object):
             self._stop = Event()
             self._httpd = Thread(target=_makeserver,
                                  args=(self._host, self._port, self._app,
-                                       self._log, start, self._stop))
+                                       self._logqueue, start, self._stop))
             self._httpd.start()
             if not start.wait(self._timeout):
                 raise RuntimeError('Timed out while starting')
@@ -216,6 +222,7 @@ class TestServer(object):
                 raise RuntimeError('Timed out while stopping')
             else:
                 self._httpd = None
+                self._stop = None
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.stop()
@@ -234,6 +241,14 @@ class TestServer(object):
 
     def log(self):
         """Return a log of requests and responses"""
+        while True:
+            try:
+                entry = self._logqueue.get(block=False)
+            except Empty:
+                break
+            else:
+                self._log.append(entry)
+
         return self._log
 
 # XXX: Support setting app as a string, 2-tuple (status, body), 3-tuple
