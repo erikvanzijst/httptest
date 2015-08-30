@@ -1,2 +1,3 @@
 # These requirements are purely for httptest's own test suite.
 requests
+tox

@@ -16,6 +16,11 @@ clean:
 	rm -rf dist build htmlcov
 	rm -f README.md MANIFEST .coverage
 
+distclean: clean
+	find . -not -path '*/.git/*' \( -name '*.orig' -o -name '*.rej' \) \
+		-exec rm -f '{}' ';'
+	rm -rf .tox
+
 install: build
 	$(PYTHON) setup.py install $(PREFIX_ARG)
 
@@ -24,7 +29,7 @@ dist:
 	$(PYTHON) setup.py -q sdist
 
 test:
-	$(PYTHON) -Werror -m unittest tests $(TESTFLAGS)
+	tox
 
 tests: test
 
