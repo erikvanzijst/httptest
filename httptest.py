@@ -1,6 +1,7 @@
 """A real live HTTP server to use in tests"""
 
 import errno
+import os
 import socket
 import time
 from io import BytesIO
@@ -16,6 +17,8 @@ except ImportError:
 
 __all__ = ['testserver', 'TestRequest', 'TestResponse', 'TestServer',
            'TestServerError', 'TestServerTimeoutError']
+
+_allow_reuse_address = os.name != 'nt'
 
 class TestRequest(object):
     """A request made to the test server"""
@@ -47,8 +50,12 @@ def _portavailable(host, port):
     """Check if the given host and port are available to be bound to"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind((host, port))
-        sock.close()
+        if _allow_reuse_address:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        finally:
+            sock.close()
     except socket.error as e:
         if e.errno == errno.EADDRINUSE:
             return False
@@ -58,6 +65,8 @@ def _portavailable(host, port):
 
 class _TestWSGIServer(WSGIServer):
     """Like WSGIServer, but sets a default timeout for handle_request()"""
+    if os.name == 'nt':
+        allow_reuse_address = _allow_reuse_address
 
     timeout = 0.5
 
