@@ -15,8 +15,7 @@ try:
 except ImportError:
     from urlparse import urljoin
 
-__all__ = ['testserver', 'TestRequest', 'TestResponse', 'TestServer',
-           'TestServerError', 'TestServerTimeoutError']
+__all__ = ['testserver', 'TestRequest', 'TestResponse', 'TestServer']
 
 _allow_reuse_address = os.name != 'nt'
 
@@ -39,12 +38,6 @@ class TestResponse(object):
         self.status = status
         self.headers = headers
         self.body = body
-
-class TestServerError(Exception):
-    pass
-
-class TestServerTimeoutError(TestServerError):
-    pass
 
 def _portavailable(host, port):
     """Check if the given host and port are available to be bound to"""
@@ -208,7 +201,7 @@ class TestServer(object):
                                        self._log, start, self._stop))
             self._httpd.start()
             if not start.wait(self._timeout):
-                raise TestServerTimeoutError('Timed out while starting')
+                raise RuntimeError('Timed out while starting')
 
     def __enter__(self):
         self.start()
@@ -220,7 +213,7 @@ class TestServer(object):
             self._stop.set()
             self._httpd.join(self._timeout)
             if self._httpd.is_alive():
-                raise TestServerTimeoutError('Timed out while stopping')
+                raise RuntimeError('Timed out while stopping')
             else:
                 self._httpd = None
 
@@ -256,7 +249,7 @@ def testserver(app=defaultapp, host='localhost', startport=30059, timeout=30):
     available port up to one hundred).
 
     A timeout for starting/stopping the server can be specified. The default
-    is 30 seconds.
+    is 30 seconds. If the timeout is reached, RuntimeError is raised.
 
     Usage:
 
