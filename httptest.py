@@ -192,7 +192,7 @@ def _logmiddleware(app, logqueue):
             logqueue.put((request, response))
     return wrapper
 
-def defaultapp(environ, start_response):
+def nocontent(environ, start_response):
     start_response('204 No Content', [])
     return [b'']
 
@@ -209,7 +209,7 @@ def _makeserver(host, port, app, logqueue, start, stopfd):
 class TestServer(object):
     """A test HTTP server"""
 
-    def __init__(self, app=defaultapp, host='localhost', startport=30059,
+    def __init__(self, app=nocontent, host='localhost', startport=30059,
                  timeout=30):
         self._app = app
         self._host = host
@@ -290,7 +290,7 @@ class TestServer(object):
 #
 # XXX: For dicts, how should 404s be handled? Should mapping None set
 #      a catchall? Or should the mapping support globs?
-def testserver(app=defaultapp, host='localhost', startport=30059, timeout=30):
+def testserver(app=nocontent, host='localhost', startport=30059, timeout=30):
     """Create a test HTTP server from a WSGI app.
 
     The test server will bind to the given host and start port (or the next
