@@ -22,7 +22,7 @@ except ImportError:
 
 __all__ = ['testserver', 'TestRequest', 'TestResponse', 'TestServer']
 
-_reuse_address = os.name != 'nt'
+_reuseaddress = os.name != 'nt'
 
 class TestRequest(object):
     """A request made to the test server"""
@@ -48,7 +48,7 @@ def _portavailable(host, port):
     """Check if the given host and port are available to be bound to"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        if _reuse_address:
+        if _reuseaddress:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((host, port))
@@ -65,7 +65,7 @@ class _TestWSGIServer(WSGIServer, object):
     """Like WSGIServer, but supports stopping via pipe"""
 
     if os.name == 'nt':
-        allow_reuse_address = _reuse_address
+        allow_reuse_address = _reuseaddress
 
     def __init__(self, *args, **kwargs):
         """Initialize the test HTTP server.
