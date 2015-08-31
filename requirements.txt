@@ -1,3 +1,4 @@
 # These requirements are purely for httptest's own test suite.
+coverage
 requests
 tox
