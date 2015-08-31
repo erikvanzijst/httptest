@@ -205,11 +205,12 @@ def _makeserver(host, port, app, logqueue, start, stopfd):
     finally:
         httpd.server_close()
 
+_servertimeout = 5
+
 class TestServer(object):
     """A test HTTP server"""
 
-    def __init__(self, app=nocontent, host='localhost', startport=30059,
-                 timeout=30):
+    def __init__(self, app=nocontent, host='localhost', startport=30059):
         self._app = app
         self._host = host
         self._startport = startport
@@ -218,7 +219,6 @@ class TestServer(object):
         self._log = []
         self._logqueue = Queue()
         self._stoppipe = None
-        self._timeout = timeout
 
     def start(self):
         """Start the HTTP server"""
@@ -236,8 +236,8 @@ class TestServer(object):
                                        self._logqueue, start,
                                        self._stoppipe[0]))
             self._httpd.start()
-            if not start.wait(self._timeout):
-                raise RuntimeError('Timed out while starting')
+            if not start.wait(_servertimeout):
+                raise RuntimeError('Timed out while starting %r' % self)
 
     def __enter__(self):
         self.start()
@@ -247,9 +247,9 @@ class TestServer(object):
         """Stop the HTTP server"""
         if self._httpd is not None:
             os.write(self._stoppipe[1], b's')
-            self._httpd.join(self._timeout)
+            self._httpd.join(_servertimeout)
             if self._httpd.is_alive():
-                raise RuntimeError('Timed out while stopping')
+                raise RuntimeError('Timed out while stopping %r' % self)
             else:
                 self._httpd = None
                 os.close(self._stoppipe[0])
@@ -289,14 +289,11 @@ class TestServer(object):
 #
 # XXX: For dicts, how should 404s be handled? Should mapping None set
 #      a catchall? Or should the mapping support globs?
-def testserver(app=nocontent, host='localhost', startport=30059, timeout=30):
+def testserver(app=nocontent, host='localhost', startport=30059):
     """Create a test HTTP server from a WSGI app.
 
     The test server will bind to the given host and start port (or the next
     available port up to one hundred).
-
-    A timeout for starting/stopping the server can be specified. The default
-    is 30 seconds. If the timeout is reached, RuntimeError is raised.
 
     Usage:
 
@@ -345,4 +342,4 @@ def testserver(app=nocontent, host='localhost', startport=30059, timeout=30):
     ...     server.stop()
     >>> assert response.text == u'Hello, test!'
     """
-    return TestServer(app, host, startport, timeout)
+    return TestServer(app, host, startport)
