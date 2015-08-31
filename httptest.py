@@ -213,7 +213,7 @@ class TestServer(object):
         self._app = app
         self._host = host
         self._startport = startport
-        self._port = None
+        self._port = startport
         self._httpd = None
         self._log = []
         self._logqueue = Queue()
