@@ -5,6 +5,7 @@ import os
 import select
 import socket
 import time
+from collections import Iterable
 from io import BytesIO
 from threading import Event, Thread
 from wsgiref.handlers import format_date_time
@@ -19,6 +20,11 @@ try:
     from queue import Empty, Queue
 except ImportError:
     from Queue import Empty, Queue
+
+try:
+    xrange
+except NameError:
+    xrange = range
 
 __all__ = ['testserver', 'TestRequest', 'TestResponse', 'TestServer']
 
@@ -210,17 +216,24 @@ _servertimeout = 5
 class TestServer(object):
     """A test HTTP server"""
 
-    def __init__(self, app=nocontent, host='localhost', startport=30059):
+    def __init__(self, app=nocontent, host='localhost',
+                 port=xrange(30059, 30159)):
         self._host = host
         self._log = []
         self._logqueue = Queue()
         self._shutdownpipe = None
 
-        port = startport
-        for port in range(startport, startport + 100):
-            if _portavailable(self._host, port):
-                break
-        self._port = port
+        if isinstance(port, Iterable):
+            p = None
+            for p in port:
+                if _portavailable(self._host, p):
+                    break
+            if p is not None:
+                self._port = p
+            else:
+                raise ValueError('No port available in %r' % port)
+        else:
+            self._port = port
 
         start = Event()
         self._shutdownpipe = os.pipe()
@@ -281,13 +294,10 @@ class TestServer(object):
 #
 # XXX: For dicts, how should 404s be handled? Should mapping None set
 #      a catchall? Or should the mapping support globs?
-#
-# XXX: Support specifying exact port? Or port range? Or take away the ability?
-def testserver(app=nocontent, host='localhost', startport=30059):
+def testserver(app=nocontent, host='localhost', port=xrange(30059, 30159)):
     """Create a test HTTP server from a WSGI app.
 
-    The test server will bind to the given host and start port (or the next
-    available port up to one hundred).
+    The test server will bind to the given host and port (or port range).
 
     Usage:
 
@@ -335,4 +345,4 @@ def testserver(app=nocontent, host='localhost', startport=30059):
     ...     server.close()
     >>> assert response.text == u'Hello, test!'
     """
-    return TestServer(app, host, startport)
+    return TestServer(app, host, port)
