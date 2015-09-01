@@ -62,7 +62,7 @@ def _portavailable(host, port):
         return True
 
 class _TestWSGIServer(WSGIServer, object):
-    """Like WSGIServer, but supports stopping via pipe"""
+    """Like WSGIServer, but supports shutdown via pipe"""
 
     if os.name == 'nt':
         allow_reuse_address = _reuseaddress
@@ -71,22 +71,22 @@ class _TestWSGIServer(WSGIServer, object):
         """Initialize the test HTTP server.
 
         In addition to the arguments WSGIserver accepts, this also
-        requires a stopfd keyword argument. This should be a pipe file
+        requires a shutdownfd keyword argument. This should be a pipe file
         descriptor that the caller will use to communicate when the server
-        should stop.
+        should shut down.
         """
-        self._stopfd = kwargs.pop('stopfd')
+        self._shutdownfd = kwargs.pop('shutdownfd')
         super(_TestWSGIServer, self).__init__(*args, **kwargs)
 
     def serve_forever(self, poll_interval=None):
-        """Serve forever--or until told to stop via the stopfd pipe"""
+        """Serve forever--or until told to shut down via the shutdownfd pipe"""
         if poll_interval is not None:
             raise ValueError('poll_interval is not supported')
 
         while True:
             while True:
                 try:
-                    fdsets = select.select([self, self._stopfd], [], [])
+                    fdsets = select.select([self, self._shutdownfd], [], [])
                     break
                 except OSError as e:
                     if e.errno != errno.EINTR:
@@ -95,7 +95,7 @@ class _TestWSGIServer(WSGIServer, object):
             if self in fdsets[0]:
                 self._handle_request_noblock()
 
-            if self._stopfd in fdsets[0]:
+            if self._shutdownfd in fdsets[0]:
                 break
 
 class _TestWSGIRequestHandler(WSGIRequestHandler, object):
@@ -195,9 +195,9 @@ def nocontent(environ, start_response):
     start_response('204 No Content', [])
     return [b'']
 
-def _makeserver(host, port, app, logqueue, start, stopfd):
+def _makeserver(host, port, app, logqueue, start, shutdownfd):
     httpd = _TestWSGIServer((host, port), _TestWSGIRequestHandler,
-                            stopfd=stopfd)
+                            shutdownfd=shutdownfd)
     httpd.set_app(_logmiddleware(app, logqueue))
     start.set()
     try:
@@ -211,53 +211,45 @@ class TestServer(object):
     """A test HTTP server"""
 
     def __init__(self, app=nocontent, host='localhost', startport=30059):
-        self._app = app
         self._host = host
-        self._startport = startport
-        self._port = startport
-        self._httpd = None
         self._log = []
         self._logqueue = Queue()
-        self._stoppipe = None
+        self._shutdownpipe = None
 
-    def start(self):
-        """Start the HTTP server"""
-        if self._httpd is None:
-            port = self._startport
-            for port in range(self._startport, self._startport + 100):
-                if _portavailable(self._host, port):
-                    break
+        port = startport
+        for port in range(startport, startport + 100):
+            if _portavailable(self._host, port):
+                break
+        self._port = port
 
-            start = Event()
-            self._port = port
-            self._stoppipe = os.pipe()
-            self._httpd = Thread(target=_makeserver,
-                                 args=(self._host, self._port, self._app,
-                                       self._logqueue, start,
-                                       self._stoppipe[0]))
-            self._httpd.start()
-            if not start.wait(_servertimeout):
-                raise RuntimeError('Timed out while starting %r' % self)
+        start = Event()
+        self._shutdownpipe = os.pipe()
+        self._httpd = Thread(target=_makeserver,
+                             args=(self._host, self._port, app,
+                                   self._logqueue, start,
+                                   self._shutdownpipe[0]))
+        self._httpd.start()
+        if not start.wait(_servertimeout):
+            raise RuntimeError('Timed out while starting %r' % self)
 
     def __enter__(self):
-        self.start()
         return self
 
-    def stop(self):
-        """Stop the HTTP server"""
+    def close(self):
+        """Shut down the HTTP server"""
         if self._httpd is not None:
-            os.write(self._stoppipe[1], b's')
+            os.write(self._shutdownpipe[1], b's')
             self._httpd.join(_servertimeout)
             if self._httpd.is_alive():
-                raise RuntimeError('Timed out while stopping %r' % self)
+                raise RuntimeError('Timed out while shutting down %r' % self)
             else:
                 self._httpd = None
-                os.close(self._stoppipe[0])
-                os.close(self._stoppipe[1])
-                self._stoppipe = None
+                os.close(self._shutdownpipe[0])
+                os.close(self._shutdownpipe[1])
+                self._shutdownpipe = None
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.stop()
+        self.close()
 
     def url(self, path=None):
         """Generate a URL based on the HTTP server's host/port.
@@ -289,6 +281,8 @@ class TestServer(object):
 #
 # XXX: For dicts, how should 404s be handled? Should mapping None set
 #      a catchall? Or should the mapping support globs?
+#
+# XXX: Support specifying exact port? Or port range? Or take away the ability?
 def testserver(app=nocontent, host='localhost', startport=30059):
     """Create a test HTTP server from a WSGI app.
 
@@ -332,14 +326,13 @@ def testserver(app=nocontent, host='localhost', startport=30059):
     >>> assert response1.text == u'Hello, test!'
     >>> assert response2.text == u'Hello again!'
 
-    As is manual starting/stopping:
+    As is manual starting/shutting down:
 
     >>> server = testserver(app)
     >>> try:
-    ...     server.start()
     ...     response = requests.get(server.url())
     ... finally:
-    ...     server.stop()
+    ...     server.close()
     >>> assert response.text == u'Hello, test!'
     """
     return TestServer(app, host, startport)
