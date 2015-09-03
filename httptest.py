@@ -12,11 +12,6 @@ from wsgiref.handlers import format_date_time
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 
 try:
-    from urllib.parse import urljoin
-except ImportError:
-    from urlparse import urljoin
-
-try:
     from queue import Empty, Queue
 except ImportError:
     from Queue import Empty, Queue
@@ -265,17 +260,16 @@ class TestServer(object):
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
-    def url(self, path=None):
+    def url(self, path='/'):
         """Generate a URL based on the HTTP server's host/port.
 
         Without any arguments, this returns the root URL (e.g.,
         'http://localhost:30059/'). If path is set, it will be joined to the
         root URL.
         """
-        u = 'http://%s:%s/' % (self._host, self._port)
-        if path is not None:
-            u = urljoin(u, path)
-        return u
+        if not path.startswith('/'):
+            path = '/' + path
+        return 'http://%s:%s%s' % (self._host, self._port, path)
 
     def log(self):
         """Return a log of requests and responses"""
