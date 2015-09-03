@@ -241,6 +241,7 @@ class TestServer(object):
                              args=(self._host, self._port, app,
                                    self._logqueue, start,
                                    self._shutdownpipe[0]))
+        self._httpd.daemon = True
         self._httpd.start()
         if not start.wait(_servertimeout):
             raise RuntimeError('Timed out while starting %r' % self)
