@@ -4,12 +4,13 @@ import errno
 import os
 import select
 import socket
+import sys
 import time
 from collections import Iterable
 from io import BytesIO
 from threading import Event, Thread
 from wsgiref.handlers import format_date_time
-from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
+from wsgiref.simple_server import ServerHandler, WSGIRequestHandler, WSGIServer
 
 try:
     from queue import Empty, Queue
@@ -79,6 +80,12 @@ class _TestWSGIServer(WSGIServer, object):
         self._shutdownfd = kwargs.pop('shutdownfd')
         super(_TestWSGIServer, self).__init__(*args, **kwargs)
 
+    def handle_error(self, request, client_address):
+        e = sys.exc_info()[1]
+        if isinstance(e, socket.error) and e.errno == errno.EPIPE:
+            return
+        super(_TestWSGIServer, self).handle_error(request, client_address)
+
     def serve_forever(self, poll_interval=None):
         """Serve forever--or until told to shut down via the shutdownfd pipe"""
         if poll_interval is not None:
@@ -99,11 +106,41 @@ class _TestWSGIServer(WSGIServer, object):
             if self._shutdownfd in fdsets[0]:
                 break
 
+class _TestServerHandler(ServerHandler, object):
+    """Like ServerHandler, but suppresses logging of EPIPE errors"""
+
+    def handle_error(self):
+        e = sys.exc_info()[1]
+        if isinstance(e, socket.error) and e.errno == errno.EPIPE:
+            return
+        super(_TestServerHandler, self).handle_error()
+
 class _TestWSGIRequestHandler(WSGIRequestHandler, object):
     """Like WSGIRequestHandler, but disables logging"""
 
     def log_request(self, code='-', size='-'):
         pass
+
+    # This is implementation is unforunately copied from WSGIRequestHandler
+    # so we can override the hardcoded ServerHandler class it uses.
+    def handle(self):
+        """Handle a single HTTP request"""
+        self.raw_requestline = self.rfile.readline(65537)
+        if len(self.raw_requestline) > 65536:
+            self.requestline = ''
+            self.request_version = ''
+            self.command = ''
+            self.send_error(414)
+            return
+
+        if not self.parse_request(): # An error code has been sent, just exit
+            return
+
+        handler = _TestServerHandler(
+            self.rfile, self.wfile, self.get_stderr(), self.get_environ()
+        )
+        handler.request_handler = self      # backpointer for logging
+        handler.run(self.server.get_app())
 
 def _logmiddleware(app, logqueue):
     """Wrap WSGI app with a middleware that logs request and response
