@@ -41,5 +41,5 @@ setup(
     long_description=long_description(),
     name='httptest',
     py_modules=['httptest'],
-    version='0.5',
+    version='0.6',
 )
