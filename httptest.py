@@ -82,7 +82,8 @@ class _TestWSGIServer(WSGIServer, object):
 
     def handle_error(self, request, client_address):
         e = sys.exc_info()[1]
-        if isinstance(e, socket.error) and e.errno == errno.EPIPE:
+        if isinstance(e, socket.error) and e.errno in {errno.ECONNRESET,
+                                                       errno.EPIPE}:
             return
         super(_TestWSGIServer, self).handle_error(request, client_address)
 
@@ -107,11 +108,13 @@ class _TestWSGIServer(WSGIServer, object):
                 break
 
 class _TestServerHandler(ServerHandler, object):
-    """Like ServerHandler, but suppresses logging of EPIPE errors"""
+    """Like ServerHandler, but suppresses logging of ECONNRESET/EPIPE errors.
+    """
 
     def handle_error(self):
         e = sys.exc_info()[1]
-        if isinstance(e, socket.error) and e.errno == errno.EPIPE:
+        if isinstance(e, socket.error) and e.errno in {errno.ECONNRESET,
+                                                       errno.EPIPE}:
             return
         super(_TestServerHandler, self).handle_error()
 
