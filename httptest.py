@@ -78,14 +78,20 @@ class _TestWSGIServer(WSGIServer, object):
         should shut down.
         """
         self._shutdownfd = kwargs.pop('shutdownfd')
+        self._ignorehangups = kwargs.pop('ignorehangups', False)
         super(_TestWSGIServer, self).__init__(*args, **kwargs)
 
     def handle_error(self, request, client_address):
         e = sys.exc_info()[1]
-        if isinstance(e, socket.error) and e.errno in {errno.ECONNRESET,
-                                                       errno.EPIPE}:
+        if (self._ignorehangups and
+            isinstance(e, socket.error) and
+            e.errno in {errno.ECONNRESET, errno.EPIPE}):
             return
         super(_TestWSGIServer, self).handle_error(request, client_address)
+
+    def finish_request(self, request, client_address):
+        self.RequestHandlerClass(request, client_address, self,
+                                 ignorehangups=self._ignorehangups)
 
     def serve_forever(self, poll_interval=None):
         """Serve forever--or until told to shut down via the shutdownfd pipe"""
@@ -108,18 +114,26 @@ class _TestWSGIServer(WSGIServer, object):
                 break
 
 class _TestServerHandler(ServerHandler, object):
-    """Like ServerHandler, but suppresses logging of ECONNRESET/EPIPE errors.
+    """Like ServerHandler, but supports suppressing logging of
+    ECONNRESET/EPIPE errors.
     """
+    def __init__(self, *args, **kwargs):
+        self._ignorehangups = kwargs.pop('ignorehangups', False)
+        super(_TestServerHandler, self).__init__(*args, **kwargs)
 
     def handle_error(self):
         e = sys.exc_info()[1]
-        if isinstance(e, socket.error) and e.errno in {errno.ECONNRESET,
-                                                       errno.EPIPE}:
+        if (self._ignorehangups and
+            isinstance(e, socket.error) and
+            e.errno in {errno.ECONNRESET, errno.EPIPE}):
             return
         super(_TestServerHandler, self).handle_error()
 
 class _TestWSGIRequestHandler(WSGIRequestHandler, object):
     """Like WSGIRequestHandler, but disables logging"""
+    def __init__(self, *args, **kwargs):
+        self._ignorehangups = kwargs.pop('ignorehangups', False)
+        super(_TestWSGIRequestHandler, self).__init__(*args, **kwargs)
 
     def log_request(self, code='-', size='-'):
         pass
@@ -140,7 +154,8 @@ class _TestWSGIRequestHandler(WSGIRequestHandler, object):
             return
 
         handler = _TestServerHandler(
-            self.rfile, self.wfile, self.get_stderr(), self.get_environ()
+            self.rfile, self.wfile, self.get_stderr(), self.get_environ(),
+            ignorehangups=self._ignorehangups
         )
         handler.request_handler = self      # backpointer for logging
         handler.run(self.server.get_app())
@@ -236,9 +251,11 @@ def nocontent(environ, start_response):
     start_response('204 No Content', [])
     return [b'']
 
-def _makeserver(host, port, app, logqueue, start, shutdownfd):
+def _makeserver(host, port, app, logqueue, start, shutdownfd,
+                ignorehangups=False):
     httpd = _TestWSGIServer((host, port), _TestWSGIRequestHandler,
-                            shutdownfd=shutdownfd)
+                            shutdownfd=shutdownfd,
+                            ignorehangups=ignorehangups)
     httpd.set_app(_logmiddleware(app, logqueue))
     start.set()
     try:
@@ -252,11 +269,12 @@ class TestServer(object):
     """A test HTTP server"""
 
     def __init__(self, app=nocontent, host='localhost',
-                 port=xrange(30059, 30159)):
+                 port=xrange(30059, 30159), ignorehangups=False):
         self._host = host
         self._log = []
         self._logqueue = Queue()
         self._shutdownpipe = None
+        self._ignorehangups = ignorehangups
 
         if isinstance(port, Iterable):
             p = None
@@ -275,7 +293,8 @@ class TestServer(object):
         self._httpd = Thread(target=_makeserver,
                              args=(self._host, self._port, app,
                                    self._logqueue, start,
-                                   self._shutdownpipe[0]))
+                                   self._shutdownpipe[0],
+                                   self._ignorehangups))
         self._httpd.daemon = True
         self._httpd.start()
         if not start.wait(_servertimeout):
@@ -329,10 +348,14 @@ class TestServer(object):
 #
 # XXX: For dicts, how should 404s be handled? Should mapping None set
 #      a catchall? Or should the mapping support globs?
-def testserver(app=nocontent, host='localhost', port=xrange(30059, 30159)):
+def testserver(app=nocontent, host='localhost', port=xrange(30059, 30159),
+               ignorehangups=False):
     """Create a test HTTP server from a WSGI app.
 
     The test server will bind to the given host and port (or port range).
+
+    If ignorehangups is True, the server will not log errors caused by clients
+    hanging up (closing their connection) early.
 
     Usage:
 
@@ -380,4 +403,4 @@ def testserver(app=nocontent, host='localhost', port=xrange(30059, 30159)):
     ...     server.close()
     >>> assert response.text == u'Hello, test!'
     """
-    return TestServer(app, host, port)
+    return TestServer(app, host, port, ignorehangups)
